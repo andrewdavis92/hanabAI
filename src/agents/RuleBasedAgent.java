@@ -1,13 +1,49 @@
 package agents;
 import hanabAI.*;
+import java.util.*;
 
 public class RuleBasedAgent implements Agent{
 
-  private Colour[] colours;
-  private int[] values;
+    private Colour[] colours;
+    private int[] values;
+    private Cards[] hand;
   private boolean firstAction = true;
   private int numPlayers;
   private int index;
+  private HashMap cardMappings;
+
+
+  /**
+   * An inner class to hold information about the agents cards
+   * Used to determine what the cards are, or what the probability of a card is
+  **/
+
+  private class Cards {
+      private Colour colour;
+      private int number;
+      private int[] distribution;
+      private int noCardsDist;
+      private int cardAge;
+
+      Cards() {
+          colour = null;
+          number = 0;
+          noCardsDist = 0;
+          cardAge = 0;
+          distribution = new int[25];
+          for (int i = 0; i < distribution.length; i++) {
+              System.out.println("i = " + i + " card at this key = " + cardMappings.get(i).toString());
+              Card test =(Card) cardMappings.get(i);
+              distribution[i] = test.getCount();
+              System.out.println("Card: " + test.toString() + " Appears: " + test.getCount());
+              noCardsDist += test.getCount();
+          }
+          System.out.println("NoCardsDist = " + noCardsDist);
+          
+      }
+      
+  }
+
 
   /**
    * Default constructor, does nothing.
@@ -19,16 +55,21 @@ public class RuleBasedAgent implements Agent{
    * @param s the State of the game at the first action
    **/
   public void init(State s){
+      setCardMappings();
+
     numPlayers = s.getPlayers().length;
     if(numPlayers>3){
-      colours = new Colour[4];
-      values = new int[4];
+        hand = new Cards[4];
+        colours = new Colour[4];
+        values = new int[4];
     }
     else{
-      colours = new Colour[5];
-      values = new int[5];
+        hand = new Cards[5];
+        colours = new Colour[5];
+        values = new int[5];
     }
     index = s.getNextPlayer();
+    System.out.println("Index: " + index);
     firstAction = false;
   }
 
@@ -36,12 +77,12 @@ public class RuleBasedAgent implements Agent{
    * Returns the name BaseLine.
    * @return the String "BaseLine"
    * */
-  public String toString(){return "BaseLine";}
+  public String toString(){return "RuleAgent";}
 
   /**
    * Performs an action given a state.
    * Assumes that they are the player to move.
-   * The strategy will 
+   * The strategy will
    * a) play a card if a card is known to be playable,
    * b) discard a card if a card is known to be useless
    * c) give a number hint to the next player with a playable card (0.1 per hint token)
@@ -51,21 +92,21 @@ public class RuleBasedAgent implements Agent{
    * g) discard a known card
    * @param s the current state of the game.
    * @return the action the player takes.
-   **/ 
+   **/
   public Action doAction(State s){
     if(firstAction){
       init(s);
-    } 
+    }
     //Assume players index is sgetNextPlayer()
     index = s.getNextPlayer();
     //get any hints
     try{
-      getHints(s);
+      getPreviousActions(s);
       Action a = playKnown(s);
       if(a==null) a = discardKnown(s);
       if(a==null) a = hint(s);
       if(a==null) a = playGuess(s);
-      if(a==null) a = discardGuess(s);
+      if(a==null) a = discardOldestCard(s);
       if(a==null) a = hintRandom(s);
       return a;
     }
@@ -76,7 +117,7 @@ public class RuleBasedAgent implements Agent{
   }
 
   //updates colours and values from hints received
-  public void getHints(State s){
+  public void getPreviousActions(State s){
     try{
       State t = (State) s.clone();
       for(int i = 0; i<Math.min(numPlayers-1,s.getOrder());i++){
@@ -85,13 +126,16 @@ public class RuleBasedAgent implements Agent{
           boolean[] hints = t.getPreviousAction().getHintedCards();
           for(int j = 0; j<hints.length; j++){
             if(hints[j]){
-              if(a.getType()==ActionType.HINT_COLOUR) 
-                colours[j] = a.getColour();
+              if(a.getType()==ActionType.HINT_COLOUR)
+                hand[j].colour = a.getColour();
               else
-                values[j] = a.getValue();  
+                hand[j].number = a.getValue();
             }
           }
-        } 
+        }
+        if (a.getType() == ActionType.DISCARD) {
+            a.getValue();
+        }
         t = t.getPreviousState();
       }
     }
@@ -107,11 +151,12 @@ public class RuleBasedAgent implements Agent{
 
   //plays the first card known to be playable.
   public Action playKnown(State s) throws IllegalActionException{
-    for(int i = 0; i<colours.length; i++){
-      if(colours[i]!=null && values[i]==playable(s,colours[i])){
-        colours[i] = null;
-        values[i] = 0;
-        return new Action(index, toString(), ActionType.PLAY,i);
+      for(int i = 0; i<hand.length; i++){
+      if(hand[i].colour != null && (hand[i].number != 0 && hand[i].number == playable(s, hand[i].colour))) {
+          hand[i].colour = null;
+          hand[i].number = 0;
+          hand[i].distribution =
+        return new Action(index, toString(), ActionType.PLAY, i);
       }
     }
     return null;
@@ -164,22 +209,9 @@ public class RuleBasedAgent implements Agent{
     return null;
   }
 
-  //with probability 0.05 for each fuse token, play a random card 
-  public Action playGuess(State s) throws IllegalActionException{
-    java.util.Random rand = new java.util.Random();
-    for(int i = 0; i<s.getFuseTokens(); i++){
-      if(rand.nextDouble()<0.05){
-        int cardIndex = rand.nextInt(colours.length);
-        colours[cardIndex] = null;
-        values[cardIndex] = 0;
-        return new Action(index, toString(), ActionType.PLAY, cardIndex);
-      }
-    }
-    return null;
-  }
-  
-  //discard a random card
-  public Action discardGuess(State s) throws IllegalActionException{
+
+  //discard the oldest card that we have no information on card
+  public Action discardOldestCard(State s) throws IllegalActionException{
     if (s.getHintTokens() != 8) {
       java.util.Random rand = new java.util.Random();
       int cardIndex = rand.nextInt(colours.length);
@@ -220,8 +252,33 @@ public class RuleBasedAgent implements Agent{
         }
 
       }
-    
+
     return null;
   }
 
+    /**
+     * A private method used when agent is first run to map the cards to the probability distribution array index values
+     * This returns nothing as it sets the values on the variable cardMappings
+     */
+    private void setCardMappings () {
+      //Create a new hashmap to map values for index of distribution array to a specific card
+        cardMappings = new HashMap();
+        //The index of the array
+        int i = 0;
+        //Loop over each card in the deck
+        for (Card card : Card.getDeck()) {
+            //Check if the card has been mapped before
+            if (cardMappings.containsValue(card)) {
+                continue;
+            }
+            //TODO Throw an exception
+            if (i > 24) {
+                System.out.println(i + "Error here\n");
+            }
+            //Map card if it hasnt been mapped before
+            cardMappings.put(i, card);
+            //Move to next index
+            i++;
+        }
+    }
 }
