@@ -6,3 +6,7 @@ src/agents/ModelAgent*
 build.sh
 #ignore the doc
 doc/*
+#Ignore IDEA IDE files
+.idea
+#Ignore mac .DS_Store files
+.DS_Store
